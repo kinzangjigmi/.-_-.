@@ -1,4 +1,231 @@
+<!DOCTYPE html>
+<html lang="dz">
+<head>
+<meta charset="UTF-8">
+<title>ཏེར་མ་ • Ter Ma • The Hidden Treasure</title>
+<style>
+  body { margin:0; background:#0a0a0a; color:#e0d4b0; font-family:'Noto Sans', sans-serif; overflow:hidden; }
+  canvas { display:block; margin:0 auto; image-rendering:pixelated; }
+  #ui { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+  .dramatic { position:absolute; font-size:3.5rem; font-weight:bold; text-shadow:0 0 30px #ffcc00; opacity:0; transition:all 1.2s; pointer-events:none; color:#ffdd88; }
+  button { pointer-events:auto; background:rgba(139,69,19,0.9); border:3px solid #e0d4b0; color:#e0d4b0; padding:12px 24px; margin:10px; font-size:1.1rem; border-radius:8px; cursor:pointer; }
+  #startScreen, #endScreen { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.95); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+</style>
+</head>
+<body>
 
-<h1> hello worlld</h1>
-<p1> technology is great!</p1>
-<f1> see you!</f1>
+<canvas id="game" width="1024" height="576"></canvas>
+<div id="ui">
+  <div id="startScreen">
+    <div id="d1" class="dramatic" style="top:25%;left:50%;transform:translate(-50%,0)">Hidden.</div>
+    <div id="d2" class="dramatic" style="top:35%;left:50%;transform:translate(-50%,0)">Sacred.</div>
+    <div id="d3" class="dramatic" style="top:45%;left:50%;transform:translate(-50%,0)">Waiting.</div>
+    <div id="d4" class="dramatic" style="top:55%;left:50%;transform:translate(-50%,0)">For you.</div>
+    <h1 style="margin-top:80px;font-size:4rem;color:#ffdd88;text-shadow:0 0 40px #ffaa00;">ཏེར་མ་<br>Ter Ma</h1>
+    <button onclick="startGame()">Begin the Journey</button>
+  </div>
+
+  <div id="battleUI" style="display:none; bottom:30px; left:50%; transform:translateX(-50%); position:absolute; text-align:center;">
+    <div id="npcName" style="font-size:2rem; margin-bottom:10px;"></div>
+    <div style="display:flex; gap:20px; justify-content:center;">
+      <button onclick="dodge('left')">← DODGE LEFT (A)</button>
+      <button onclick="dodge('right')">DODGE RIGHT (D) →</button>
+    </div>
+    <button onclick="speakKindWords()" style="margin-top:15px; background:#228B22;">Speak Kind Words</button>
+  </div>
+
+  <div id="hearts" style="position:absolute; top:20px; right:30px; font-size:2rem;"></div>
+</div>
+
+<div id="endScreen" style="display:none;">
+  <h1 style="font-size:4rem;color:#ffdd88;">You found the Ter!</h1>
+  <p id="endText" style="max-width:600px;font-size:1.4rem;line-height:1.6;"></p>
+  <button onclick="location.reload()">Journey Again</button>
+</div>
+
+<script>
+// ====================== AUDIO SYSTEM ======================
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playNote(freq, duration, type='sine', vol=0.3) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.value = vol;
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+// Ambient Bhutanese flute drone + pentatonic melody
+let ambientInterval;
+function startAmbient() {
+  ambientInterval = setInterval(() => {
+    const notes = [220, 261.6, 293.7, 329.6, 392]; // pentatonic
+    playNote(notes[Math.floor(Math.random()*5)], 4, 'sine', 0.15);
+    playNote(notes[Math.floor(Math.random()*5)]*2, 3, 'triangle', 0.08);
+  }, 2800);
+}
+
+// SFX
+function sfx(type) {
+  if (type==='hit') { playNote(180,0.1,'sawtooth',0.6); playNote(120,0.3,'sawtooth',0.4); }
+  if (type==='dodge') { playNote(800,0.05); playNote(1200,0.08); }
+  if (type==='convince') { playNote(440,0.4,'triangle',0.4); playNote(660,0.6,'sine',0.3); }
+  if (type==='victory') { for(let i=0;i<8;i++) setTimeout(()=>playNote(600+i*80,0.2),i*80); }
+  if (type==='roar') { playNote(80,0.8,'sawtooth',0.7); }
+}
+
+// ====================== GAME STATE ======================
+let currentRoom = 0;
+let defeated = new Set();
+const rooms = [
+  {name:"Hall of Numbers", npc:"Migoe", emoji:"❄️", color:"#88ccff"},
+  {name:"Gallery of Shapes", npc:"Jachung", emoji:"🦅", color:"#ffaa66"},
+  {name:"Library of Voices", npc:"Chenzin Tag", emoji:"🐅", color:"#ff4444"},
+  {name:"Mirror Room", npc:"Gangchen Singye", emoji:"🦁", color:"#ffee88"}
+];
+
+let playerHearts = 5;
+let currentNPC = null;
+let npcHearts = 3;
+
+// ====================== CANVAS SETUP ======================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let playerX = 400;
+
+// Simple silhouette drawing
+function drawPlayer(x, flip=false) {
+  ctx.save();
+  if(flip) ctx.scale(-1,1), x=-x;
+  ctx.fillStyle = '#e0d4b0';
+  ctx.fillRect(x-30, 300, 60, 120);           // body
+  ctx.fillRect(x-45, 250, 90, 60);            // shoulders
+  ctx.fillRect(x-20, 180, 40, 80);            // head
+  ctx.restore();
+}
+
+function drawNPC(name, x) {
+  ctx.font = '120px serif';
+  ctx.fillText(rooms.find(r=>r.npc===name).emoji, x-50, 380);
+}
+
+// ====================== BATTLE ======================
+function startBattle(npc) {
+  currentNPC = npc;
+  npcHearts = 3;
+  document.getElementById('battleUI').style.display = 'block';
+  document.getElementById('npcName').textContent = npc + " guards the way";
+  updateHearts();
+  sfx('roar');
+}
+
+function updateHearts() {
+  let h = '❤️'.repeat(npcHearts);
+  document.getElementById('hearts').innerHTML = `<span style="color:#ff3366">${h}</span>`;
+}
+
+function dodge(dir) {
+  sfx('dodge');
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  
+  // NPC wind-up attack
+  setTimeout(() => {
+    if (Math.random() < 0.7) { // hit
+      sfx('hit');
+      npcHearts--;
+      updateHearts();
+      if (npcHearts <= 0) endBattle();
+    } else {
+      // successful dodge window
+    }
+  }, 400);
+}
+
+function speakKindWords() {
+  sfx('convince');
+  const wisdoms = [
+    "Numbers are only fingers pointing at the moon.",
+    "Shapes arise and dissolve like clouds in the sky.",
+    "Every voice is an echo of the one great silence.",
+    "The mirror shows only what you bring to it."
+  ];
+  alert(wisdoms[rooms.findIndex(r=>r.npc===currentNPC)]); // dramatic popup
+  npcHearts = Math.max(0, npcHearts-1);
+  updateHearts();
+  if (npcHearts <= 0) endBattle();
+}
+
+function endBattle() {
+  document.getElementById('battleUI').style.display = 'none';
+  sfx('victory');
+  defeated.add(currentNPC);
+  setTimeout(() => {
+    alert(currentNPC + " bows and steps aside.\n\n“May your treasure benefit all beings.”");
+    currentRoom++;
+    if (currentRoom >= rooms.length) showEnding();
+    else drawRoom();
+  }, 800);
+}
+
+// ====================== DRAWING ======================
+function drawRoom() {
+  ctx.fillStyle = rooms[currentRoom].color + '22';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  
+  ctx.fillStyle = '#442200';
+  ctx.fillRect(0,420,canvas.width,156); // ground
+  
+  drawPlayer(playerX);
+  
+  if (!defeated.has(rooms[currentRoom].npc)) {
+    drawNPC(rooms[currentRoom].npc, 650);
+    ctx.fillStyle = '#fff';
+    ctx.font = '30px serif';
+    ctx.fillText(rooms[currentRoom].emoji + " " + rooms[currentRoom].npc, 620, 480);
+  } else {
+    ctx.fillStyle = '#88ff88';
+    ctx.font = '28px serif';
+    ctx.fillText(rooms[currentRoom].npc + " smiles and waves", 500, 300);
+  }
+}
+
+// ====================== INPUT ======================
+document.addEventListener('keydown', e => {
+  if (e.key === 'a' || e.key === 'A') dodge('left');
+  if (e.key === 'd' || e.key === 'D') dodge('right');
+});
+
+// ====================== START & END ======================
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  startAmbient();
+  drawRoom();
+  
+  // dramatic pop-in
+  setTimeout(()=>document.getElementById('d1').style.opacity=1, 300);
+  setTimeout(()=>document.getElementById('d2').style.opacity=1, 800);
+  setTimeout(()=>document.getElementById('d3').style.opacity=1, 1300);
+  setTimeout(()=>document.getElementById('d4').style.opacity=1, 1800);
+}
+
+function showEnding() {
+  document.getElementById('endScreen').style.display = 'flex';
+  document.getElementById('endText').innerHTML = `
+    You have walked the path of the Four Guardians.<br><br>
+    The hidden treasure (ཏེར་མ་) was never gold —<br>
+    it was the awakened heart that can now see clearly.<br><br>
+    བཀྲ་ཤིས་བདེ་ལེགས་<br>
+    Tashi Delek, treasure revealer.
+  `;
+  sfx('victory');
+}
+
+// Initial draw
+drawRoom();
+</script>
+</body>
+</html>
